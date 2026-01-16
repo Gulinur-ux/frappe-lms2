@@ -5,6 +5,9 @@ app_description = "lms uchun app"
 app_email = "ruziyevagulinur@gmail.com"
 app_license = "mit"
 
+app_include_js = [
+    "/assets/custom_lms/js/video_tracker.js"
+]
 # Apps
 # ------------------
 
@@ -137,13 +140,15 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"LMS Lesson Completion": {
+		"on_update": "custom_lms.events.publish_lesson_completion",
+		"after_insert": "custom_lms.events.publish_lesson_completion"
+	},
+	"LMS Quiz Submission": {
+		"on_submit": "custom_lms.events.publish_quiz_submission"
+	}
+}
 
 # Scheduled Tasks
 # ---------------

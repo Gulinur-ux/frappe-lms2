@@ -1,0 +1,23 @@
+{
+ "content": "<!-- no-sidebar -->",
+ "creation": "2026-01-15 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-01-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Custom Lms",
+ "name": "student-progress-dashboard",
+ "owner": "Administrator",
+ "page_name": "student-progress-dashboard",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "LMS Student"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Student Progress Dashboard"
+}
