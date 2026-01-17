@@ -165,65 +165,78 @@
 
     function setupVideoTracking() {
         const video = document.querySelector('video');
-        if (!video) return;
+        const iframe = document.querySelector('iframe[src*="youtube.com"]');
 
-        console.log('Video tracker attached');
+        if (video) {
+            setupHTML5Video(video);
+        } else if (iframe) {
+            setupYouTubeVideo(iframe);
+        }
+    }
 
-        // Initial metadata
+    function setupHTML5Video(video) {
+        console.log('HTML5 video tracker attached');
         if (video.duration) state.videoDuration = video.duration;
-        video.addEventListener('loadedmetadata', () => {
-            state.videoDuration = video.duration;
-        });
-
-        // Time update (every ~250ms while playing)
+        video.addEventListener('loadedmetadata', () => { state.videoDuration = video.duration; });
         video.addEventListener('timeupdate', () => {
             if (!video.paused && !video.seeking) {
-                // Approximate time tracking (accumulate 0.25s or actual delta)
-                const now = video.currentTime;
-                // Add to watched segments (integer second)
-                state.watchedSegments.add(Math.floor(now));
-
-                // Add to total watch time (delta)
-                // We don't have exact delta here easily without robust logic, 
-                // but incrementing by actual played duration is safer.
-                // Simpler: just use the set size for percentage calculation, 
-                // and for total_watch_time, accumulate carefully.
+                state.watchedSegments.add(Math.floor(video.currentTime));
             }
         });
 
-        // Robust total watch time separate interval
-        let lastTime = 0;
         let watchInterval = setInterval(() => {
-            if (video && !video.paused && !video.seeking) {
-                state.totalWatchTime += 1; // Add 1 second every second
+            if (!video.paused && !video.seeking) {
+                state.totalWatchTime += 1;
             }
         }, 1000);
 
-        // Seek tracking
-        video.addEventListener('seeking', () => {
-            // Filter auto-seeks or minor adjustments if needed
-            // But raw count is usually fine
-            state.seekCount++;
-            console.log('Seek detected', state.seekCount);
-        });
-
-        // Pause tracking
-        video.addEventListener('pause', () => {
-            if (!video.seeking && video.currentTime < video.duration) {
-                state.pauseCount++;
-                console.log('Pause detected', state.pauseCount);
-            }
-        });
-
-        // Rate change
-        video.addEventListener('ratechange', () => {
-            state.playbackSpeeds.push(video.playbackRate);
-        });
-
-        // Completion
+        video.addEventListener('seeking', () => state.seekCount++);
+        video.addEventListener('pause', () => state.pauseCount++);
+        video.addEventListener('ratechange', () => state.playbackSpeeds.push(video.playbackRate));
         video.addEventListener('ended', () => {
-            markLessonComplete(state.lesson, state.course);
+            // Completion is handled by saveAnalytics percentage check
         });
+    }
+
+    function setupYouTubeVideo(iframe) {
+        console.log("YouTube video detected");
+        // Inject YouTube API if not present
+        if (!window.YT) {
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        }
+
+        const onPlayerReady = (event) => {
+            console.log("YT Player Ready");
+            state.videoDuration = event.target.getDuration();
+            setInterval(() => {
+                if (event.target.getPlayerState() === 1) { // Playing
+                    state.watchedSegments.add(Math.floor(event.target.getCurrentTime()));
+                    state.totalWatchTime += 1;
+                }
+            }, 1000);
+        };
+
+        const onStateChange = (event) => {
+            if (event.data === 2) state.pauseCount++; // Paused
+        };
+
+        const checkYT = setInterval(() => {
+            if (window.YT && window.YT.Player) {
+                clearInterval(checkYT);
+                // We need to enable JS API on iframe if not already
+                // Often solved by re-creating logic or just attaching if ID exists
+                // For simplicity, we assume iframe is ready or we just use it
+                new YT.Player(iframe, {
+                    events: {
+                        'onReady': onPlayerReady,
+                        'onStateChange': onStateChange
+                    }
+                });
+            }
+        }, 500);
     }
 
     function init() {
