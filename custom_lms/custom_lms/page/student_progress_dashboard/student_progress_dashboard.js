@@ -14,8 +14,9 @@ frappe.pages['student-progress-dashboard'].on_page_load = function (wrapper) {
                 <div class="col-md-4"><div id="filter-lesson"></div></div>
             </div>
             <div class="row mb-4">
-                <div class="col-md-6"><div class="p-3 bg-white border rounded"><h6>Total Students</h6><h2 id="stat-s">0</h2></div></div>
-                <div class="col-md-6"><div class="p-3 bg-white border rounded"><h6>Total Lessons</h6><h2 id="stat-l">0</h2></div></div>
+                <div class="col-md-4"><div class="p-3 bg-white border rounded"><h6>Total Students</h6><h2 id="stat-s">0</h2></div></div>
+                <div class="col-md-4"><div class="p-3 bg-white border rounded"><h6>Total Courses</h6><h2 id="stat-c">0</h2></div></div>
+                <div class="col-md-4"><div class="p-3 bg-white border rounded"><h6>Total Lessons</h6><h2 id="stat-l">0</h2></div></div>
             </div>
             <div class="bg-white border rounded">
                 <table class="table table-hover m-0">
@@ -76,6 +77,7 @@ frappe.pages['student-progress-dashboard'].on_page_load = function (wrapper) {
                 if (!d) return;
 
                 $('#stat-s').text(d.total_students || 0);
+                $('#stat-c').text(d.total_courses || 0);
                 $('#stat-l').text(d.total_lessons || 0);
                 render_students_list(d.students || []);
             }

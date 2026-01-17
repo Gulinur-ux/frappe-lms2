@@ -108,13 +108,20 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
 
     results = []
     total_lessons_count = 0
+    
+    # Pre-fetch valid courses for performance
+    valid_courses_map = {c.name: c.title for c in frappe.get_all("LMS Course", fields=["name", "title"])}
+    
     for en in enrollments:
+        if en.course not in valid_courses_map:
+            continue
+            
         lesson_filters = {"course": en.course}
         if lesson: lesson_filters["name"] = lesson
         lessons = frappe.get_all("Course Lesson", filters=lesson_filters, fields=["name", "title", "quiz_id"])
         
         total_lessons_count += len(lessons)
-        course_title = frappe.get_value("LMS Course", en.course, "title") or en.course
+        course_title = valid_courses_map.get(en.course) or en.course
         
         student_data = {
             "student": en.member,
@@ -179,7 +186,15 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
         student_data["last_activity"] = frappe.utils.pretty_date(latest_activity) if latest_activity else "Never"
         results.append(student_data)
 
-    return {"students": results, "total_lessons": total_lessons_count, "total_students": total_students_count}
+    # Total Courses calculation (Unique) - Only count valid/existing courses
+    valid_courses = frappe.get_all("LMS Course", fields=["name"], pluck="name")
+    unique_enrolled_courses = set(e.course for e in enrollments)
+    # Intersection of enrolled courses and valid courses
+    valid_enrolled_courses = unique_enrolled_courses.intersection(set(valid_courses))
+    
+    total_courses_count = len(valid_enrolled_courses)
+
+    return {"students": results, "total_lessons": total_lessons_count, "total_students": total_students_count, "total_courses": total_courses_count}
 
 @frappe.whitelist()
 def track_lesson_view(lesson, course):
