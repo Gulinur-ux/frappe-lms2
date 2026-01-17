@@ -1,6 +1,7 @@
 /**
  * Lesson Tracker - Advanced Video Analytics
  * Tracks lesson completion, video engagement, and viewing behavior.
+ * Supports HTML5 Video and YouTube Embeds with Auto-API Injection.
  */
 (function () {
     'use strict';
@@ -24,6 +25,7 @@
     };
 
     let saveInterval = null;
+    let videoCheckInterval = null;
 
     function isLessonPage() {
         return window.location.pathname.includes('/courses/') &&
@@ -97,12 +99,8 @@
 
     function markLessonComplete(lesson, course) {
         if (state.completed) return;
-
-        // Check if engagement is high enough (optional enforcement)
-        // For now just mark complete
         state.completed = true;
-        saveAnalytics(true); // Save final analytics
-
+        saveAnalytics(true);
         frappe.call({
             method: 'custom_lms.api.mark_lesson_complete',
             args: { lesson: lesson, course: course },
@@ -123,19 +121,21 @@
         // Calculate watch percentage
         let watchPercentage = 0;
         if (state.videoDuration > 0) {
-            // Count unique seconds watched
             const uniqueSeconds = state.watchedSegments.size;
             watchPercentage = (uniqueSeconds / state.videoDuration) * 100;
-            // Cap at 100
             watchPercentage = Math.min(watchPercentage, 100);
             state.maxWatchPercentage = Math.max(state.maxWatchPercentage, watchPercentage);
         }
 
-        // Check for completion based on percentage (90% threshold)
-        if (!state.completed && watchPercentage >= 90) {
-            markLessonComplete(state.lesson, state.course);
-            isCompleted = true; // Update local flag for this save
+        // Strict Completion: If video exists, require 90%
+        if (!state.completed && state.videoDuration > 0) {
+            if (watchPercentage >= 90) {
+                markLessonComplete(state.lesson, state.course);
+                isCompleted = true;
+            }
         }
+
+        // Note: For text lessons (videoDuration == 0), completion is handled by timer callback in setupVideoTracking
 
         const data = {
             lesson: state.lesson,
@@ -151,31 +151,54 @@
             completed: isCompleted
         };
 
-        // Use frappe.call instead of sendBeacon for better reliability with custom methods
-        // sendBeacon requires a specific endpoint handling text/plain or Blob
         frappe.call({
             method: 'custom_lms.api.save_video_analytics',
             args: { data: JSON.stringify(data) },
             async: true,
-            callback: (r) => {
-                // Silent success
-            }
+            callback: (r) => { }
         });
     }
 
     function setupVideoTracking() {
-        const video = document.querySelector('video');
-        const iframe = document.querySelector('iframe[src*="youtube.com"]');
+        let attempts = 0;
+        const maxAttempts = 10; // 5 seconds check (500ms * 10)
 
-        if (video) {
-            setupHTML5Video(video);
-        } else if (iframe) {
-            setupYouTubeVideo(iframe);
+        // Ensure YT API is loaded
+        if (!window.YT) {
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         }
+
+        videoCheckInterval = setInterval(() => {
+            const video = document.querySelector('video');
+            const iframe = document.querySelector('iframe[src*="youtube.com"]');
+
+            if (video) {
+                clearInterval(videoCheckInterval);
+                setupHTML5Video(video);
+                return;
+            } else if (iframe) {
+                clearInterval(videoCheckInterval);
+                setupYouTubeVideo(iframe);
+                return;
+            }
+
+            attempts++;
+            if (attempts >= maxAttempts) {
+                clearInterval(videoCheckInterval);
+                console.log("No video found, switching to Text Lesson mode (10s timer)");
+                // Text/Image only lesson -> Complete after 10s
+                setTimeout(() => {
+                    markLessonComplete(state.lesson, state.course);
+                }, 10000);
+            }
+        }, 500);
     }
 
     function setupHTML5Video(video) {
-        console.log('HTML5 video tracker attached');
+        console.log('HTML5 video detected');
         if (video.duration) state.videoDuration = video.duration;
         video.addEventListener('loadedmetadata', () => { state.videoDuration = video.duration; });
         video.addEventListener('timeupdate', () => {
@@ -184,7 +207,7 @@
             }
         });
 
-        let watchInterval = setInterval(() => {
+        setInterval(() => {
             if (!video.paused && !video.seeking) {
                 state.totalWatchTime += 1;
             }
@@ -193,46 +216,48 @@
         video.addEventListener('seeking', () => state.seekCount++);
         video.addEventListener('pause', () => state.pauseCount++);
         video.addEventListener('ratechange', () => state.playbackSpeeds.push(video.playbackRate));
-        video.addEventListener('ended', () => {
-            // Completion is handled by saveAnalytics percentage check
-        });
     }
 
     function setupYouTubeVideo(iframe) {
         console.log("YouTube video detected");
-        // Inject YouTube API if not present
-        if (!window.YT) {
-            var tag = document.createElement('script');
-            tag.src = "https://www.youtube.com/iframe_api";
-            var firstScriptTag = document.getElementsByTagName('script')[0];
-            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        // Auto-fix: Add enablejsapi=1 if missing
+        let src = iframe.getAttribute('src');
+        if (src && !src.includes('data-yt-fixed')) {
+            if (src && !src.includes('enablejsapi=1')) {
+                console.log("Injecting enablejsapi=1 to iframe");
+                const separator = src.includes('?') ? '&' : '?';
+                iframe.src = src + separator + 'enablejsapi=1';
+                iframe.setAttribute('data-yt-fixed', 'true');
+                // Wait for reload
+                iframe.onload = () => initYTPlayer(iframe);
+            } else {
+                initYTPlayer(iframe);
+            }
+        } else {
+            initYTPlayer(iframe);
         }
+    }
 
-        const onPlayerReady = (event) => {
-            console.log("YT Player Ready");
-            state.videoDuration = event.target.getDuration();
-            setInterval(() => {
-                if (event.target.getPlayerState() === 1) { // Playing
-                    state.watchedSegments.add(Math.floor(event.target.getCurrentTime()));
-                    state.totalWatchTime += 1;
-                }
-            }, 1000);
-        };
-
-        const onStateChange = (event) => {
-            if (event.data === 2) state.pauseCount++; // Paused
-        };
-
+    function initYTPlayer(iframe) {
         const checkYT = setInterval(() => {
             if (window.YT && window.YT.Player) {
                 clearInterval(checkYT);
-                // We need to enable JS API on iframe if not already
-                // Often solved by re-creating logic or just attaching if ID exists
-                // For simplicity, we assume iframe is ready or we just use it
                 new YT.Player(iframe, {
                     events: {
-                        'onReady': onPlayerReady,
-                        'onStateChange': onStateChange
+                        'onReady': (event) => {
+                            console.log("YT Player Ready");
+                            state.videoDuration = event.target.getDuration();
+                            setInterval(() => {
+                                if (event.target.getPlayerState() === 1) { // Playing
+                                    state.watchedSegments.add(Math.floor(event.target.getCurrentTime()));
+                                    state.totalWatchTime += 1;
+                                }
+                            }, 1000);
+                        },
+                        'onStateChange': (event) => {
+                            if (event.data === 2) state.pauseCount++; // Paused
+                        }
                     }
                 });
             }
@@ -260,6 +285,7 @@
         };
 
         if (saveInterval) clearInterval(saveInterval);
+        if (videoCheckInterval) clearInterval(videoCheckInterval);
 
         const info = getLessonInfo();
         if (!info) return;
@@ -273,17 +299,7 @@
                 console.log('Tracking analytics for:', lessonName);
 
                 trackLessonView(lessonName, info.course);
-                setupVideoTracking();
-
-                // Video bo'lmasa, 10 soniyadan keyin complete (text darslar uchun)
-                const video = document.querySelector('video');
-                if (!video) {
-                    setTimeout(() => {
-                        markLessonComplete(lessonName, info.course);
-                    }, 10000);
-                }
-                // Video bo'lsa, hech qanday timer yo'q. 
-                // Complete bo'lishi uchun watch_percentage >= 90 bo'lishi kerak (saveAnalytics da)
+                setupVideoTracking(); // Starts looking for video or fallback
 
                 // Auto-save every 30 seconds
                 saveInterval = setInterval(() => {
@@ -294,23 +310,8 @@
                 window.addEventListener('beforeunload', () => {
                     saveAnalytics(false);
                 });
-
-                // Also complete on scroll if video missing or user prefers reading
-                setTimeout(() => {
-                    const video = document.querySelector('video');
-                    // Only auto-complete by scroll if video is short or non-existent?
-                    // User requested "optimal way", maybe remove scroll completion if video exists 
-                    // to force watching? 
-                    // Let's keep scroll completion but maybe stricter/longer delay?
-                    // Original logic:
-                    window.addEventListener('scroll', () => {
-                        if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) {
-                            markLessonComplete(lessonName, info.course);
-                        }
-                    });
-                }, 5000); // 5s delay before enabling scroll completion
             }
-        }, 2000);
+        }, 1000);
     }
 
     // Init Logic
