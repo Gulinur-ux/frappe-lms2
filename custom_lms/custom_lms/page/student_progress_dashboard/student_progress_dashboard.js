@@ -92,6 +92,12 @@ frappe.pages['student-progress-dashboard'].on_page_load = function (wrapper) {
                     const row_id = `details-${idx}`;
                     const displayName = s.student_name && s.student_name !== 'null' ? s.student_name : s.student;
 
+                    // Engagement badge color
+                    let engColor = 'bg-secondary';
+                    if (s.avg_engagement >= 70) engColor = 'bg-success';
+                    else if (s.avg_engagement >= 40) engColor = 'bg-warning text-dark';
+                    else if (s.avg_engagement > 0) engColor = 'bg-danger';
+
                     $body.append(`
                         <tr class="clickable-row" style="cursor:pointer" onclick="$('#${row_id}').toggle()">
                             <td>
@@ -104,24 +110,52 @@ frappe.pages['student-progress-dashboard'].on_page_load = function (wrapper) {
                                 </div>
                                 <small class="text-muted">${progress}% completed</small>
                             </td>
-                            <td>${s.completed_count} of ${s.total_course_lessons || 0} completed</td>
+                            <td>
+                                <div>${s.completed_count} of ${s.total_course_lessons || 0} completed</div>
+                                <div class="mt-1 badge ${engColor}" title="Based on watch time, seeks, and speed">
+                                    Engagement: ${s.avg_engagement || 0}
+                                </div>
+                            </td>
                             <td>${s.last_activity || 'Never'}</td>
                         </tr>
                         <tr id="${row_id}" style="display:none; background:#f9f9f9">
                             <td colspan="4" class="p-4">
                                 <h6>Lesson Details</h6>
                                 <table class="table table-sm table-bordered bg-white">
-                                    <thead><tr><th>Lesson</th><th>Status</th><th>Speed</th><th>Quiz</th><th>Activity</th></tr></thead>
+                                    <thead>
+                                        <tr>
+                                            <th>Lesson</th>
+                                            <th>Status</th>
+                                            <th>Video Engagement</th>
+                                            <th>Quiz</th>
+                                            <th>Activity</th>
+                                        </tr>
+                                    </thead>
                                     <tbody>
-                                        ${s.lesson_details.map(ld => `
+                                        ${s.lesson_details.map(ld => {
+                        // Engagement color for lesson
+                        let lEngColor = 'bg-secondary';
+                        if (ld.engagement_score >= 70) lEngColor = 'bg-success';
+                        else if (ld.engagement_score >= 40) lEngColor = 'bg-warning text-dark';
+                        else if (ld.engagement_score > 0) lEngColor = 'bg-danger';
+
+                        // Format metrics
+                        const metrics = ld.engagement_score > 0 ?
+                            `<span class="badge ${lEngColor}" style="min-width:40px">${ld.engagement_score}</span>
+                                                 <small class="ms-2 text-muted">
+                                                    Watch: <b>${ld.watch_percentage}</b> | Seeks: <b>${ld.seek_count}</b>
+                                                 </small>` :
+                            `<span class="text-muted small">No data</span>`;
+
+                        return `
                                             <tr>
                                                 <td>${ld.lesson_title}</td>
                                                 <td><span class="badge ${ld.is_completed ? 'bg-success' : 'bg-warning'}">${ld.is_completed ? 'Completed' : 'Pending'}</span></td>
-                                                <td>${ld.video_speed}</td>
+                                                <td>${metrics}</td>
                                                 <td>${ld.quiz_score} (${ld.quiz_attempts} att)</td>
                                                 <td>${ld.last_activity}</td>
                                             </tr>
-                                        `).join('')}
+                                        `}).join('')}
                                     </tbody>
                                 </table>
                             </td>

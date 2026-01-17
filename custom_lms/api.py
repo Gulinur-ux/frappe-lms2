@@ -75,6 +75,20 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
     lesson_quizzes = frappe.get_all("LMS Quiz", fields=["name", "lesson"])
     lesson_quiz_map = {lq.lesson: lq.name for lq in lesson_quizzes if lq.lesson}
 
+    # Video analytics data
+    analytics_filters = {}
+    if student: analytics_filters["user"] = student
+    
+    analytics_data = frappe.get_all("LMS Video Analytics", filters=analytics_filters, 
+                                   fields=["user", "lesson", "engagement_score", "watch_percentage", "seek_count", "total_watch_time"],
+                                   order_by="creation desc")
+    analytics_map = {}
+    for a in analytics_data:
+        # Use the latest record for each lesson
+        key = (a.user, a.lesson)
+        if key not in analytics_map:
+            analytics_map[key] = a
+
     results = []
     total_lessons_count = 0
     for en in enrollments:
@@ -93,10 +107,14 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
             "completed_count": 0,
             "total_course_lessons": len(lessons),
             "lesson_details": [],
-            "last_activity": None
+            "last_activity": None,
+            "avg_engagement": 0
         }
         
         latest_activity = None
+        total_engagement = 0
+        engagement_count = 0
+        
         for l in lessons:
             prog = progress_map.get((en.member, l.name))
             is_comp = prog and prog.status == "Complete"
@@ -112,6 +130,13 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
             quiz_name = lesson_quiz_map.get(l.name) or l.quiz_id
             q = quiz_map.get((en.member, quiz_name)) if quiz_name else None
             
+            # Analytics
+            analytics = analytics_map.get((en.member, l.name))
+            engagement_score = analytics.engagement_score if analytics else 0
+            if analytics:
+                total_engagement += engagement_score
+                engagement_count += 1
+            
             student_data["lesson_details"].append({
                 "lesson_title": l.title,
                 "is_completed": 1 if is_comp else 0,
@@ -120,7 +145,10 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
                 "last_activity": frappe.utils.pretty_date(prog.modified) if prog else "Never",
                 "quiz_attempts": q["attempts"] if q else "-",
                 "quiz_score": f"{q['best']}%" if q else "N/A",
-                "quiz_passed": q["passed_at"] if q else None
+                "quiz_passed": q["passed_at"] if q else None,
+                "engagement_score": engagement_score,
+                "watch_percentage": f"{analytics.watch_percentage}%" if analytics else "0%",
+                "seek_count": analytics.seek_count if analytics else 0
             })
         
         # Calculate progress percentage
@@ -128,6 +156,8 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
             student_data["progress_percent"] = round((student_data["completed_count"] / len(lessons)) * 100, 1)
         else:
             student_data["progress_percent"] = 0
+            
+        student_data["avg_engagement"] = round(total_engagement / engagement_count, 1) if engagement_count > 0 else 0
         
         student_data["last_activity"] = frappe.utils.pretty_date(latest_activity) if latest_activity else "Never"
         results.append(student_data)
@@ -223,3 +253,82 @@ def mark_lesson_complete(lesson, course):
     })
     
     return {"status": "ok", "message": "Lesson completed"}
+
+@frappe.whitelist()
+def save_video_analytics(data):
+    """
+    Saves video analytics data sent from frontend.
+    Data structure expected:
+    {
+        "lesson": "lesson_name",
+        "course": "course_name",
+        "video_duration": 120.5,
+        "watch_percentage": 50.5,
+        "total_watch_time": 60.2,
+        "seek_count": 2,
+        "pause_count": 1,
+        "playback_speed": 1.5,
+        "page_time_spent": 300.0
+    }
+    """
+    import json
+    if isinstance(data, str):
+        data = json.loads(data)
+        
+    user = frappe.session.user
+    if user == "Guest":
+        return {"status": "error", "message": "Guest user"}
+        
+    lesson = data.get("lesson")
+    course = data.get("course")
+    
+    if not lesson or not course:
+        return {"status": "error", "message": "Missing lesson or course"}
+
+    from frappe.utils import today
+    
+    # Check for existing record created today
+    existing = frappe.db.count("LMS Video Analytics", {
+        "user": user,
+        "lesson": lesson,
+        "course": course,
+        "creation": (">", today()) 
+    })
+    
+    if existing:
+        # Get the latest one
+        name = frappe.db.get_value("LMS Video Analytics", {
+            "user": user, 
+            "lesson": lesson, 
+            "course": course,
+            "creation": (">", today())
+        }, "name", order_by="creation desc")
+        doc = frappe.get_doc("LMS Video Analytics", name)
+    else:
+        doc = frappe.new_doc("LMS Video Analytics")
+        doc.user = user
+        doc.lesson = lesson
+        doc.course = course
+        doc.started_at = frappe.utils.now()
+
+    # Update metrics - simple logic: trust frontend cumulative data
+    doc.video_duration = data.get("video_duration", 0)
+    
+    # Take max of existing or new watch %
+    doc.watch_percentage = max(doc.watch_percentage or 0, data.get("watch_percentage", 0))
+    
+    doc.total_watch_time = data.get("total_watch_time", 0)
+    doc.seek_count = data.get("seek_count", 0)
+    doc.pause_count = data.get("pause_count", 0)
+    
+    if data.get("playback_speed"):
+        doc.playback_speed = data.get("playback_speed")
+        
+    doc.page_time_spent = data.get("page_time_spent", 0)
+    
+    if data.get("completed"):
+        doc.completed_at = frappe.utils.now()
+        
+    doc.save(ignore_permissions=True)
+    
+    return {"status": "ok", "message": "Analytics saved", "name": doc.name}
