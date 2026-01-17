@@ -33,7 +33,7 @@ app_include_js = [
 
 # include js, css files in header of web template
 # web_include_css = "/assets/custom_lms/css/custom_lms.css"
-# web_include_js = "/assets/custom_lms/js/custom_lms.js"
+web_include_js = "/assets/custom_lms/js/lesson_tracker.js"
 
 # include custom scss in every website theme (without file extension ".scss")
 # website_theme_scss = "custom_lms/public/scss/website"
@@ -141,7 +141,7 @@ app_include_js = [
 # Hook on document methods and events
 
 doc_events = {
-	"LMS Lesson Completion": {
+	"LMS Course Progress": {
 		"on_update": "custom_lms.events.publish_lesson_completion",
 		"after_insert": "custom_lms.events.publish_lesson_completion"
 	},

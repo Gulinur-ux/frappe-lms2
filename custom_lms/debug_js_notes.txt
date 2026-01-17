@@ -1,0 +1,11 @@
+// Debugging script to be run in browser console (simulated via manual check or assumed knowledge)
+// Ideally, I would check if change event works.
+
+// Better yet, I will modify the JS file to explicitly bind the change event.
+// Standard Frappe usage usually requires explicitly binding change for standalone controls.
+
+/*
+    let control = frappe.ui.form.make_control(...)
+    control.make_input()
+    control.$input.on('change', () => ...)
+*/

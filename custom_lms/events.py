@@ -2,14 +2,13 @@ import frappe
 
 def publish_lesson_completion(doc, method):
     """
-    Publish event when a lesson is completed.
-    This handles both 'on_update' (if status changes) or 'on_submit'.
-    Since the dashboard needs to know WHICH student and lesson, we send that data.
+    Publish event when a lesson progress is updated.
     """
     frappe.publish_realtime("lesson_completion_update", {
         "student": doc.member,
         "lesson": doc.lesson,
-        "course": doc.course 
+        "course": doc.course,
+        "status": doc.status
     })
 
 def publish_quiz_submission(doc, method):
