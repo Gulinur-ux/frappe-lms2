@@ -7,6 +7,7 @@
     'use strict';
 
     // State 
+    // State 
     let state = {
         tracked: false,
         completed: false,
@@ -15,11 +16,12 @@
         startTime: Date.now(),
         // Video metrics
         videoDuration: 0,
-        totalWatchTime: 0,
+        accumulatedTime: 0, // NEW: Real watched time
+        pastTime: 0, // NEW: Time watched before this session
+        totalWatchTime: 0,  // Duplicate field for compatibility or removal? Let's use accumulatedTime as the source of truth.
         seekCount: 0,
         pauseCount: 0,
         lastVideoTime: 0,
-        watchedSegments: new Set(), // Store integer seconds watched
         playbackSpeeds: [],
         maxWatchPercentage: 0
     };
@@ -93,7 +95,20 @@
         frappe.call({
             method: 'custom_lms.api.track_lesson_view',
             args: { lesson: lesson, course: course },
-            async: true
+            async: true,
+            callback: (r) => {
+                if (r && r.message) {
+                    // Init state from backend
+                    state.pastTime = r.message.past_accumulated_time || 0;
+                    if (r.message.today_accumulated_time) {
+                        state.accumulatedTime = r.message.today_accumulated_time;
+                    }
+                    if (r.message.video_duration && state.videoDuration === 0) {
+                        state.videoDuration = r.message.video_duration;
+                    }
+                    console.log(`Resumed tracking. Past: ${state.pastTime}s, Today: ${state.accumulatedTime}s, Duration: ${state.videoDuration}s`);
+                }
+            }
         });
     }
 
@@ -113,16 +128,51 @@
         });
     }
 
+    function updateProgress() {
+        if (state.completed) return;
+
+        // Safe duration check
+        if (!state.videoDuration || state.videoDuration <= 0) {
+            // console.log("Waiting for duration...");
+            return;
+        }
+
+        // Strict Calculation: Accumulated Time / Duration
+        // Use MAIN state which tracks persistence
+        const totalEffectiveTime = state.accumulatedTime + state.pastTime;
+        const percent = (totalEffectiveTime / state.videoDuration) * 100;
+
+        console.log(`Debug: Current: ${state.accumulatedTime.toFixed(1)}s, Past: ${state.pastTime.toFixed(1)}s, Total: ${totalEffectiveTime.toFixed(1)}s / ${state.videoDuration.toFixed(1)}s (${percent.toFixed(1)}%)`);
+
+        if (percent >= 90) { // 90% threshold
+            state.completed = true; // Sync main state
+            console.log("Lesson Completed (90% watched)");
+
+            // Show alert to user
+            frappe.show_alert({ message: 'Lesson Completed! (90% watched)', indicator: 'green' });
+
+            markLessonComplete(state.lesson, state.course);
+            saveAnalytics(true);
+        }
+    }
+
     function saveAnalytics(isCompleted = false) {
         if (!state.lesson || !state.course) return;
 
         const timeSpent = (Date.now() - state.startTime) / 1000;
 
-        // Calculate watch percentage
+        // Calculate watch percentage using accumulatedTime (Anti-Cheat)
         let watchPercentage = 0;
+        let totalEffectiveTime = state.accumulatedTime + state.pastTime;
+
+        // Sync duration if needed
+        if (!state.videoDuration && state.accumulatedTime > 0) {
+            // Fallback if videoDuration is 0 but we have stats
+            state.videoDuration = (totalEffectiveTime * 100) / (state.maxWatchPercentage || 1);
+        }
+
         if (state.videoDuration > 0) {
-            const uniqueSeconds = state.watchedSegments.size;
-            watchPercentage = (uniqueSeconds / state.videoDuration) * 100;
+            watchPercentage = (totalEffectiveTime / state.videoDuration) * 100;
             watchPercentage = Math.min(watchPercentage, 100);
             state.maxWatchPercentage = Math.max(state.maxWatchPercentage, watchPercentage);
         }
@@ -140,7 +190,7 @@
             course: state.course,
             video_duration: state.videoDuration,
             watch_percentage: parseFloat(state.maxWatchPercentage.toFixed(2)),
-            total_watch_time: parseFloat(state.totalWatchTime.toFixed(2)),
+            total_watch_time: parseFloat(state.accumulatedTime.toFixed(2)),
             seek_count: state.seekCount,
             pause_count: state.pauseCount,
             playback_speed: state.playbackSpeeds.length ?
@@ -209,20 +259,34 @@
     function setupHTML5Video(video) {
         console.log('HTML5 video detected');
         if (video.duration) state.videoDuration = video.duration;
+        state.lastVideoTime = video.currentTime;
+
         video.addEventListener('loadedmetadata', () => { state.videoDuration = video.duration; });
+
         video.addEventListener('timeupdate', () => {
             if (!video.paused && !video.seeking) {
-                state.watchedSegments.add(Math.floor(video.currentTime));
+                const currentTime = video.currentTime;
+                const delta = currentTime - state.lastVideoTime;
+
+                // Anti-Cheat: Only accumulate if delta is small (natural playback)
+                // 1.5s threshold allows for minor lag but prevents skipping
+                if (delta > 0 && delta < 1.5) {
+                    state.accumulatedTime += delta;
+                }
+                state.lastVideoTime = currentTime;
+
+                // Trigger check
+                videoState.accumulatedTime = state.accumulatedTime; // Sync for local logic if needed
+                updateProgress();
             }
         });
 
-        setInterval(() => {
-            if (!video.paused && !video.seeking) {
-                state.totalWatchTime += 1;
-            }
-        }, 1000);
+        video.addEventListener('seeking', () => {
+            state.seekCount++;
+            // Reset lastVideoTime to new position so we don't count the jump
+            state.lastVideoTime = video.currentTime;
+        });
 
-        video.addEventListener('seeking', () => state.seekCount++);
         video.addEventListener('pause', () => state.pauseCount++);
         video.addEventListener('ratechange', () => state.playbackSpeeds.push(video.playbackRate));
     }
@@ -257,10 +321,25 @@
                         'onReady': (event) => {
                             console.log("YT Player Ready");
                             state.videoDuration = event.target.getDuration();
+                            state.lastVideoTime = event.target.getCurrentTime();
+
                             setInterval(() => {
                                 if (event.target.getPlayerState() === 1) { // Playing
-                                    state.watchedSegments.add(Math.floor(event.target.getCurrentTime()));
-                                    state.totalWatchTime += 1;
+                                    const currentTime = event.target.getCurrentTime();
+                                    const delta = currentTime - state.lastVideoTime;
+
+                                    // Anti-Cheat: YouTube poll is 1s. Allow 2.0s for lag.
+                                    if (delta > 0 && delta < 2.0) {
+                                        state.accumulatedTime += delta;
+                                        updateProgress();
+                                    } else if (delta > 2.0) {
+                                        // Seek detected
+                                        state.seekCount++;
+                                    }
+                                    state.lastVideoTime = currentTime;
+                                } else {
+                                    // Even if paused, update lastVideoTime so resuming doesn't count as jump
+                                    state.lastVideoTime = event.target.getCurrentTime();
                                 }
                             }, 1000);
                         },
@@ -284,11 +363,11 @@
             course: null,
             startTime: Date.now(),
             videoDuration: 0,
+            accumulatedTime: 0,
             totalWatchTime: 0,
             seekCount: 0,
             pauseCount: 0,
             lastVideoTime: 0,
-            watchedSegments: new Set(),
             playbackSpeeds: [],
             maxWatchPercentage: 0
         };

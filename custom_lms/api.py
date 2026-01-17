@@ -222,9 +222,42 @@ def track_lesson_view(lesson, course):
             "status": "Partially Complete"
         })
         
-        return {"status": "ok", "message": "Progress created"}
+        return {
+            "status": "ok", 
+            "message": "Progress created",
+            "past_accumulated_time": 0.0,
+            "today_accumulated_time": 0.0
+        }
     
-    return {"status": "ok", "message": "Already tracked"}
+    
+    # Calculate accumulated watch time
+    from frappe.utils import today
+    
+    # 1. Past Accumulated (Before Today)
+    past_accumulated_time = frappe.db.sql("""
+        SELECT SUM(total_watch_time) FROM `tabLMS Video Analytics`
+        WHERE user = %s AND lesson = %s AND course = %s AND creation < %s
+    """, (user, lesson, course, today()))[0][0] or 0.0
+    
+    # 2. Today's Accumulated (Today)
+    today_accumulated_time = frappe.db.sql("""
+        SELECT SUM(total_watch_time) FROM `tabLMS Video Analytics`
+        WHERE user = %s AND lesson = %s AND course = %s AND creation >= %s
+    """, (user, lesson, course, today()))[0][0] or 0.0
+    
+    # 3. Video Duration (Take max found)
+    video_duration = frappe.db.sql("""
+        SELECT MAX(video_duration) FROM `tabLMS Video Analytics`
+        WHERE user = %s AND lesson = %s AND course = %s
+    """, (user, lesson, course))[0][0] or 0.0
+    
+    return {
+        "status": "ok", 
+        "message": "Already tracked", 
+        "past_accumulated_time": float(past_accumulated_time),
+        "today_accumulated_time": float(today_accumulated_time),
+        "video_duration": float(video_duration)
+    }
 
 @frappe.whitelist()
 def mark_lesson_complete(lesson, course):
