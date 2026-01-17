@@ -39,20 +39,15 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
     
     enrollments = frappe.get_all("LMS Enrollment", filters=enrollment_filters, fields=["name", "course", "member"])
     
-    # Total Students calculation (Unique)
-    student_count_sql = """
-        SELECT COUNT(DISTINCT member) FROM `tabLMS Enrollment`
-        WHERE 1=1
-    """
-    sql_args = []
-    if course:
-        student_count_sql += " AND course = %s"
-        sql_args.append(course)
-    if student:
-        student_count_sql += " AND member = %s"
-        sql_args.append(student)
-        
-    total_students_count = frappe.db.sql(student_count_sql, tuple(sql_args))[0][0]
+    # Pre-fetch valid courses
+    valid_courses = frappe.get_all("LMS Course", fields=["name"], pluck="name")
+    valid_courses_set = set(valid_courses)
+    
+    # Filter enrollments for valid courses only
+    valid_enrollments = [e for e in enrollments if e.course in valid_courses_set]
+    
+    # Calculate Total Students (Unique members in valid courses)
+    total_students_count = len(set(e.member for e in valid_enrollments))
 
 
     
@@ -186,13 +181,8 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
         student_data["last_activity"] = frappe.utils.pretty_date(latest_activity) if latest_activity else "Never"
         results.append(student_data)
 
-    # Total Courses calculation (Unique) - Only count valid/existing courses
-    valid_courses = frappe.get_all("LMS Course", fields=["name"], pluck="name")
-    unique_enrolled_courses = set(e.course for e in enrollments)
-    # Intersection of enrolled courses and valid courses
-    valid_enrolled_courses = unique_enrolled_courses.intersection(set(valid_courses))
-    
-    total_courses_count = len(valid_enrolled_courses)
+    # Total Courses calculation (Unique from valid enrollments)
+    total_courses_count = len(set(e.course for e in valid_enrollments))
 
     return {"students": results, "total_lessons": total_lessons_count, "total_students": total_students_count, "total_courses": total_courses_count}
 
