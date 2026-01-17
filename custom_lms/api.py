@@ -39,6 +39,23 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
     
     enrollments = frappe.get_all("LMS Enrollment", filters=enrollment_filters, fields=["name", "course", "member"])
     
+    # Total Students calculation (Unique)
+    student_count_sql = """
+        SELECT COUNT(DISTINCT member) FROM `tabLMS Enrollment`
+        WHERE 1=1
+    """
+    sql_args = []
+    if course:
+        student_count_sql += " AND course = %s"
+        sql_args.append(course)
+    if student:
+        student_count_sql += " AND member = %s"
+        sql_args.append(student)
+        
+    total_students_count = frappe.db.sql(student_count_sql, tuple(sql_args))[0][0]
+
+
+    
     # Video progress
     video_filters = {}
     if student: video_filters["user"] = student
@@ -162,7 +179,7 @@ def get_student_dashboard_data(course=None, student=None, lesson=None):
         student_data["last_activity"] = frappe.utils.pretty_date(latest_activity) if latest_activity else "Never"
         results.append(student_data)
 
-    return {"students": results, "total_lessons": total_lessons_count, "total_students": len(results)}
+    return {"students": results, "total_lessons": total_lessons_count, "total_students": total_students_count}
 
 @frappe.whitelist()
 def track_lesson_view(lesson, course):
