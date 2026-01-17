@@ -135,8 +135,6 @@
             }
         }
 
-        // Note: For text lessons (videoDuration == 0), completion is handled by timer callback in setupVideoTracking
-
         const data = {
             lesson: state.lesson,
             course: state.course,
@@ -161,7 +159,7 @@
 
     function setupVideoTracking() {
         let attempts = 0;
-        const maxAttempts = 10; // 5 seconds check (500ms * 10)
+        const maxAttempts = 6; // 3 seconds check (500ms * 6)
 
         // Ensure YT API is loaded
         if (!window.YT) {
@@ -170,6 +168,9 @@
             var firstScriptTag = document.getElementsByTagName('script')[0];
             firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         }
+
+        // Visual indicator that tracking is starting
+        console.log("Starting video detection...");
 
         videoCheckInterval = setInterval(() => {
             const video = document.querySelector('video');
@@ -188,11 +189,19 @@
             attempts++;
             if (attempts >= maxAttempts) {
                 clearInterval(videoCheckInterval);
-                console.log("No video found, switching to Text Lesson mode (10s timer)");
-                // Text/Image only lesson -> Complete after 10s
+                console.log("No video found, switching to Text/Image Lesson mode");
+
+                // 1. Timer based completion (5 seconds)
                 setTimeout(() => {
                     markLessonComplete(state.lesson, state.course);
-                }, 10000);
+                }, 5000);
+
+                // 2. Scroll based completion (Immediate if scrolled to bottom)
+                window.addEventListener('scroll', () => {
+                    if (!state.completed && (window.innerHeight + window.scrollY) >= document.body.offsetHeight - 50) {
+                        markLessonComplete(state.lesson, state.course);
+                    }
+                });
             }
         }, 500);
     }
